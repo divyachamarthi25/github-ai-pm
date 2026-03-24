@@ -7,7 +7,7 @@ RUN pip install --no-cache-dir flask requests
 
 # Copy application
 COPY app.py .
-COPY .env .
+
 
 # Environment
 ENV PORT=8000
