@@ -293,6 +293,30 @@ Rewrite as structured update. Populate ONLY from what's in the text, don't inven
         return jsonify({"template":structured})
     except Exception as e: return jsonify({"error":str(e)}), 500
 
+@app.route("/api/issues/comment", methods=["POST"])
+def post_comment():
+    d = request.json or {}
+    owner, repo, num, body = d.get("owner"), d.get("repo"), d.get("issue_number"), d.get("body","")
+    if not all([owner, repo, num, body]):
+        return jsonify({"error":"Missing required fields"}), 400
+    if not GITHUB_TOKEN:
+        return jsonify({"error":"GitHub token required to post comments. Add GITHUB_TOKEN to your .env file."}), 400
+    try:
+        payload = json.dumps({"body": body}).encode()
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{owner}/{repo}/issues/{num}/comments",
+            data=payload,
+            headers={"Accept":"application/vnd.github+json","Authorization":f"Bearer {GITHUB_TOKEN}",
+                     "X-GitHub-Api-Version":"2022-11-28","Content-Type":"application/json","User-Agent":"GH-AI-PM/1.0"},
+            method="POST")
+        with urllib.request.urlopen(req, timeout=15) as r:
+            result = json.loads(r.read())
+            return jsonify({"url": result["html_url"]})
+    except urllib.error.HTTPError as e:
+        err = e.read().decode("utf-8", errors="ignore")
+        return jsonify({"error":f"GitHub error {e.code}: {err}"}), e.code
+    except Exception as e: return jsonify({"error":str(e)}), 500
+
 @app.route("/api/report/executive", methods=["POST"])
 def executive():
     d = request.json or {}
@@ -604,16 +628,25 @@ const Tabs=({tabs,active,onChange})=>(
 );
 
 /* ── Template Editor ── */
-const TmplEditor=({init,iss})=>{
+const TmplEditor=({init,iss,owner,repo})=>{
   const[text,setText]=useState(init);
   const[free,setFree]=useState('');
   const[loading,setLoading]=useState(false);
+  const[posting,setPosting]=useState(false);
+  const[posted,setPosted]=useState(null);
   const run=async()=>{
     if(!free.trim())return;
     setLoading(true);
     try{const r=await api('/api/issues/template',{issue:iss,update_text:free});setText(r.template);}
     catch(e){setText('Error: '+e.message);}
     finally{setLoading(false);}
+  };
+  const postToGitHub=async()=>{
+    if(!text.trim())return;
+    setPosting(true);setPosted(null);
+    try{const r=await api('/api/issues/comment',{owner,repo,issue_number:iss.number,body:text});setPosted({ok:true,url:r.url});}
+    catch(e){setPosted({ok:false,msg:e.message});}
+    finally{setPosting(false);}
   };
   return(
     <div style={{display:'flex',flexDirection:'column',gap:14}}>
@@ -634,10 +667,20 @@ const TmplEditor=({init,iss})=>{
         <textarea value={text} onChange={e=>setText(e.target.value)}
           style={{width:'100%',height:270,padding:'10px 12px',border:'1px solid var(--border)',borderRadius:8,fontFamily:'var(--mono)',fontSize:12,resize:'vertical',outline:'none',lineHeight:1.7,color:'var(--text)'}}/>
       </div>
-      <div style={{display:'flex',gap:8,alignItems:'center'}}>
+      <div style={{display:'flex',gap:8,alignItems:'center',flexWrap:'wrap'}}>
         <CopyBtn text={text}/>
-        <span style={{fontSize:11,color:'var(--muted)'}}>Paste directly into GitHub issue comment</span>
+        <Btn color='green' sm onClick={postToGitHub} disabled={posting||!text.trim()}>
+          {posting?<><div className="spin" style={{width:11,height:11,border:'2px solid #fff4',borderTopColor:'#fff',borderRadius:'50%'}}/> Posting…</>:<><Ico n='github' s={12}/> Post to GitHub</>}
+        </Btn>
       </div>
+      {posted&&(posted.ok
+        ?<div style={{padding:'8px 12px',background:'#DCFCE7',border:'1px solid #BBF7D0',borderRadius:8,fontSize:12,color:'#166534'}}>
+          ✅ Comment posted! <a href={posted.url} target="_blank" rel="noreferrer" style={{color:'#166534',fontWeight:700}}>View on GitHub →</a>
+         </div>
+        ?<div style={{padding:'8px 12px',background:'#FEE2E2',border:'1px solid #FECACA',borderRadius:8,fontSize:12,color:'#991B1B'}}>
+          ❌ {posted.msg}
+         </div>
+      )}
     </div>
   );
 };
@@ -976,7 +1019,7 @@ function App(){
                 </div>
               )}
               {panel.type==='template'
-                ?<TmplEditor init={panel.content} iss={panel.iss}/>
+                ?<TmplEditor init={panel.content} iss={panel.iss} owner={data.owner} repo={data.repo}/>
                 :<MdView content={panel.content}/>
               }
             </>
