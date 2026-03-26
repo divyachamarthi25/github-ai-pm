@@ -1035,6 +1035,10 @@ ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
 </body>
 </html>"""
 
+@app.route("/favicon.ico")
+def favicon():
+    return Response(status=204)
+
 @app.route("/")
 def index():
     return Response(HTML, mimetype="text/html")
